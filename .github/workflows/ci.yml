@@ -7,7 +7,7 @@ on:
     branches: [ main ]
 
 jobs:
-  # Backend Tests
+  # Backend Test
   backend-test:
     runs-on: ubuntu-latest
     
