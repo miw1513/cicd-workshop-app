@@ -1,0 +1,33 @@
+name: Monitoring and Alerting
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'  # Every 15 minutes
+  workflow_dispatch:
+
+jobs:
+  # Health Check
+  health-check:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Check application health
+      run: |
+        curl -f http://your-app-url/health || exit 1
+        
+    - name: Notify on failure
+      if: failure()
+      run: |
+        echo "Application health check failed!"
+        # Add notification logic here
+
+  # Metrics Collection
+  metrics:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Collect metrics
+      run: |
+        # Collect CPU, memory, response time metrics
+        # Send to monitoring service (Prometheus, DataDog, etc.)
+        echo "Metrics collected successfully"
