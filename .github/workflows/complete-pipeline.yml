@@ -1,0 +1,511 @@
+name: Complete CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME_BACKEND: ${{ github.repository }}/backend
+  IMAGE_NAME_FRONTEND: ${{ github.repository }}/frontend
+
+jobs:
+  # ==================== TEST STAGE ====================
+  test:
+    name: Test Applications
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: test_db
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    # Backend Tests
+    - name: Setup Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.21'
+        cache: true
+
+    - name: Run backend tests
+      run: |
+        cd backend
+        go test -v -race -coverprofile=coverage.out ./...
+        go tool cover -html=coverage.out -o coverage.html
+
+    - name: Upload backend coverage
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./backend/coverage.out
+        flags: backend
+        name: backend-coverage
+
+    # Frontend Tests
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+        cache-dependency-path: frontend/package-lock.json
+
+    - name: Install frontend dependencies
+      run: |
+        cd frontend
+        npm ci
+
+    - name: Run frontend tests
+      run: |
+        cd frontend
+        npm run test:unit
+
+    - name: Run frontend linting
+      run: |
+        cd frontend
+        npm run lint
+
+    - name: Upload frontend coverage
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./frontend/coverage/lcov.info
+        flags: frontend
+        name: frontend-coverage
+
+    # Security Scanning
+    - name: Run Trivy vulnerability scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'fs'
+        scan-ref: '.'
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+
+    - name: Upload Trivy scan results
+      uses: github/codeql-action/upload-sarif@v2
+      if: always()
+      with:
+        sarif_file: 'trivy-results.sarif'
+
+  # ==================== BUILD STAGE ====================
+  build:
+    name: Build Docker Images
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event_name == 'push'
+
+    outputs:
+      backend-image: ${{ steps.backend-meta.outputs.tags }}
+      frontend-image: ${{ steps.frontend-meta.outputs.tags }}
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    # Build Backend
+    - name: Extract backend metadata
+      id: backend-meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_BACKEND }}
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=sha,prefix={{branch}}-
+          type=raw,value=latest,enable={{is_default_branch}}
+
+    - name: Build and push backend image
+      uses: docker/build-push-action@v5
+      with:
+        context: ./backend
+        push: true
+        tags: ${{ steps.backend-meta.outputs.tags }}
+        labels: ${{ steps.backend-meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+    # Build Frontend
+    - name: Extract frontend metadata
+      id: frontend-meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_FRONTEND }}
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=sha,prefix={{branch}}-
+          type=raw,value=latest,enable={{is_default_branch}}
+
+    - name: Build and push frontend image
+      uses: docker/build-push-action@v5
+      with:
+        context: ./frontend
+        push: true
+        tags: ${{ steps.frontend-meta.outputs.tags }}
+        labels: ${{ steps.frontend-meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+  # ==================== FAKE DEPLOY STAGE ====================
+  fake-deploy:
+    name: Fake Deployment
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Simulate deployment to staging
+      run: |
+        echo "🚀 Deploying to staging environment..."
+        echo "Backend Image: ${{ needs.build.outputs.backend-image }}"
+        echo "Frontend Image: ${{ needs.build.outputs.frontend-image }}"
+        
+        # Simulate deployment process
+        echo "📦 Pulling images..."
+        sleep 5
+        
+        echo "🔄 Updating services..."
+        sleep 10
+        
+        echo "✅ Staging deployment completed!"
+        echo "🌐 Staging URL: https://staging.example.com"
+
+    - name: Simulate deployment to production
+      run: |
+        echo "🚀 Deploying to production environment..."
+        
+        # Simulate production deployment
+        echo "📦 Pulling images..."
+        sleep 5
+        
+        echo "🔄 Rolling update..."
+        sleep 15
+        
+        echo "✅ Production deployment completed!"
+        echo "🌐 Production URL: https://app.example.com"
+
+  # ==================== FAKE LOAD TEST STAGE ====================
+  fake-load-test:
+    name: Fake Load Testing
+    runs-on: ubuntu-latest
+    needs: fake-deploy
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Simulate load testing
+      run: |
+        echo "🔥 Starting load testing..."
+        
+        # Simulate different load test scenarios
+        echo "📊 Running baseline test (10 users, 1 minute)..."
+        sleep 10
+        
+        echo "📊 Running stress test (100 users, 5 minutes)..."
+        sleep 15
+        
+        echo "📊 Running spike test (1000 users, 2 minutes)..."
+        sleep 10
+        
+        # Generate fake metrics
+        echo "📈 Load Test Results:"
+        echo "  - Average Response Time: 245ms"
+        echo "  - 95th Percentile: 890ms"
+        echo "  - Error Rate: 0.1%"
+        echo "  - Throughput: 1250 req/s"
+        echo "  - CPU Usage: 65%"
+        echo "  - Memory Usage: 512MB"
+        
+        echo "✅ Load testing completed successfully!"
+
+    - name: Upload load test results
+      uses: actions/upload-artifact@v3
+      with:
+        name: load-test-results
+        path: |
+          load-test-report.json
+        retention-days: 30
+
+  # ==================== FAKE CHECK STAGE ====================
+  fake-check:
+    name: Fake Health Checks
+    runs-on: ubuntu-latest
+    needs: fake-load-test
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Simulate health checks
+      run: |
+        echo "🏥 Running comprehensive health checks..."
+        
+        # Simulate various health checks
+        echo "🔍 Checking backend health..."
+        sleep 3
+        echo "  ✅ Backend API: OK (200ms)"
+        echo "  ✅ Database: Connected"
+        echo "  ✅ Redis: Connected"
+        
+        echo "🔍 Checking frontend health..."
+        sleep 2
+        echo "  ✅ Frontend: OK (150ms)"
+        echo "  ✅ Static Assets: Loaded"
+        echo "  ✅ CDN: Responsive"
+        
+        echo "🔍 Checking external dependencies..."
+        sleep 3
+        echo "  ✅ Payment Gateway: OK"
+        echo "  ✅ Email Service: OK"
+        echo "  ✅ SMS Service: OK"
+        
+        echo "🔍 Checking security..."
+        sleep 2
+        echo "  ✅ SSL Certificate: Valid"
+        echo "  ✅ Firewall: Active"
+        echo "  ✅ DDoS Protection: Active"
+        
+        echo "✅ All health checks passed!"
+
+    - name: Generate health report
+      run: |
+        cat > health-report.json << EOF
+        {
+          "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+          "status": "healthy",
+          "checks": {
+            "backend": {
+              "status": "ok",
+              "response_time": "200ms",
+              "uptime": "99.9%"
+            },
+            "frontend": {
+              "status": "ok",
+              "response_time": "150ms",
+              "uptime": "99.9%"
+            },
+            "database": {
+              "status": "ok",
+              "connections": 45,
+              "response_time": "50ms"
+            }
+          }
+        }
+        EOF
+
+    - name: Upload health report
+      uses: actions/upload-artifact@v3
+      with:
+        name: health-report
+        path: health-report.json
+        retention-days: 30
+
+  # ==================== UPTIME MONITORING STAGE ====================
+  uptime-monitoring:
+    name: Uptime Monitoring
+    runs-on: ubuntu-latest
+    needs: fake-check
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Simulate uptime monitoring
+      run: |
+        echo "⏰ Setting up uptime monitoring..."
+        
+        # Simulate monitoring setup
+        echo "📡 Configuring monitoring endpoints..."
+        sleep 2
+        
+        echo "🔔 Setting up alerts..."
+        sleep 2
+        
+        echo "📊 Monitoring Dashboard:"
+        echo "  - Backend Uptime: 99.95%"
+        echo "  - Frontend Uptime: 99.98%"
+        echo "  - Database Uptime: 99.99%"
+        echo "  - CDN Uptime: 99.99%"
+        
+        echo "🚨 Alert Configuration:"
+        echo "  - Response Time > 2s: Email + Slack"
+        echo "  - Error Rate > 1%: Email + Slack + SMS"
+        echo "  - Uptime < 99%: Email + Slack + SMS + Phone"
+        
+        echo "📈 Performance Metrics:"
+        echo "  - Average Response Time: 180ms"
+        echo "  - Peak Response Time: 1.2s"
+        echo "  - Error Rate: 0.05%"
+        echo "  - Daily Active Users: 12,450"
+        
+        echo "✅ Uptime monitoring configured successfully!"
+
+    - name: Create monitoring dashboard
+      run: |
+        cat > monitoring-dashboard.json << EOF
+        {
+          "dashboard": {
+            "name": "CI/CD Workshop Monitoring",
+            "version": "1.0.0",
+            "created": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "widgets": [
+              {
+                "type": "uptime",
+                "title": "Service Uptime",
+                "targets": [
+                  {"service": "backend", "uptime": "99.95%"},
+                  {"service": "frontend", "uptime": "99.98%"},
+                  {"service": "database", "uptime": "99.99%"}
+                ]
+              },
+              {
+                "type": "response_time",
+                "title": "Response Times",
+                "targets": [
+                  {"service": "backend", "avg": "180ms", "p95": "450ms"},
+                  {"service": "frontend", "avg": "120ms", "p95": "300ms"}
+                ]
+              },
+              {
+                "type": "errors",
+                "title": "Error Rates",
+                "targets": [
+                  {"service": "backend", "rate": "0.03%"},
+                  {"service": "frontend", "rate": "0.02%"}
+                ]
+              }
+            ]
+          }
+        }
+        EOF
+
+    - name: Upload monitoring dashboard
+      uses: actions/upload-artifact@v3
+      with:
+        name: monitoring-dashboard
+        path: monitoring-dashboard.json
+        retention-days: 30
+
+  # ==================== NOTIFICATION STAGE ====================
+  notify:
+    name: Send Notifications
+    runs-on: ubuntu-latest
+    needs: [test, build, fake-deploy, fake-load-test, fake-check, uptime-monitoring]
+    if: always()
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Determine pipeline status
+      id: status
+      run: |
+        if [[ "${{ needs.test.result }}" == "success" && 
+              "${{ needs.build.result }}" == "success" && 
+              "${{ needs.fake-deploy.result }}" == "success" && 
+              "${{ needs.fake-load-test.result }}" == "success" && 
+              "${{ needs.fake-check.result }}" == "success" && 
+              "${{ needs.uptime-monitoring.result }}" == "success" ]]; then
+          echo "status=success" >> $GITHUB_OUTPUT
+          echo "message=🎉 Pipeline completed successfully!" >> $GITHUB_OUTPUT
+        else
+          echo "status=failure" >> $GITHUB_OUTPUT
+          echo "message=❌ Pipeline failed!" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Send success notification
+      if: steps.status.outputs.status == 'success'
+      run: |
+        echo "${{ steps.status.outputs.message }}"
+        echo "📊 Pipeline Summary:"
+        echo "  ✅ Tests: Passed"
+        echo "  ✅ Build: Completed"
+        echo "  ✅ Deploy: Successful"
+        echo "  ✅ Load Test: Passed"
+        echo "  ✅ Health Check: Passed"
+        echo "  ✅ Monitoring: Configured"
+        echo ""
+        echo "🌐 Application URLs:"
+        echo "  - Staging: https://staging.example.com"
+        echo "  - Production: https://app.example.com"
+        echo "  - Monitoring: https://monitoring.example.com"
+
+    - name: Send failure notification
+      if: steps.status.outputs.status == 'failure'
+      run: |
+        echo "${{ steps.status.outputs.message }}"
+        echo "📊 Pipeline Summary:"
+        echo "  Test Result: ${{ needs.test.result }}"
+        echo "  Build Result: ${{ needs.build.result }}"
+        echo "  Deploy Result: ${{ needs.fake-deploy.result }}"
+        echo "  Load Test Result: ${{ needs.fake-load-test.result }}"
+        echo "  Health Check Result: ${{ needs.fake-check.result }}"
+        echo "  Monitoring Result: ${{ needs.uptime-monitoring.result }}"
+        echo ""
+        echo "🔍 Check the Actions tab for detailed logs"
+
+    - name: Create deployment summary
+      run: |
+        cat > deployment-summary.md << EOF
+        # Deployment Summary
+        
+        **Pipeline Status:** ${{ steps.status.outputs.status }}
+        **Triggered by:** ${{ github.actor }}
+        **Branch:** ${{ github.ref_name }}
+        **Commit:** ${{ github.sha }}
+        **Timestamp:** $(date -u +%Y-%m-%dT%H:%M:%SZ)
+        
+        ## Stage Results
+        - **Test:** ${{ needs.test.result }}
+        - **Build:** ${{ needs.build.result }}
+        - **Deploy:** ${{ needs.fake-deploy.result }}
+        - **Load Test:** ${{ needs.fake-load-test.result }}
+        - **Health Check:** ${{ needs.fake-check.result }}
+        - **Monitoring:** ${{ needs.uptime-monitoring.result }}
+        
+        ## Artifacts
+        - Load Test Results
+        - Health Report
+        - Monitoring Dashboard
+        
+        ## Next Steps
+        ${{ steps.status.outputs.status == 'success' && '✅ Deployment successful! Monitor application health.' || '❌ Review failed stages and fix issues.' }}
+        EOF
+
+    - name: Upload deployment summary
+      uses: actions/upload-artifact@v3
+      with:
+        name: deployment-summary
+        path: deployment-summary.md
+        retention-days: 30
