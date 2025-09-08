@@ -23,7 +23,7 @@
 
 <script setup lang="ts">
 import { onMounted } from 'vue'
-import { useHealthStore } from './stores/health'
+import { useHealthStore } from '../stores/health'
 
 const healthStore = useHealthStore()
 
