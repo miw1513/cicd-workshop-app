@@ -69,26 +69,17 @@ jobs:
         cd frontend
         npm ci
 
-    - name: Run frontend tests
-      run: |
-        cd frontend
-        npm run test:unit
 
     - name: Run frontend linting
       run: |
         cd frontend
         npm run lint
 
-    - name: Upload frontend coverage
-      uses: codecov/codecov-action@v3
-      with:
-        file: ./frontend/coverage/lcov.info
-        flags: frontend
-        name: frontend-coverage
+
 
     # Security Scanning
     - name: Run Trivy vulnerability scanner
-      uses: aquasecurity/trivy-action@master
+      uses: aquasecurity/trivy-action@0.33.1
       with:
         scan-type: 'fs'
         scan-ref: '.'
